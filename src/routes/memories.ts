@@ -1,138 +1,78 @@
 import { FastifyInstance } from 'fastify'
+import axios from 'axios'
 import { z } from 'zod'
 import { prisma } from '../lib/prisma'
 
 export async function memoriesRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', async (request) => {
-    await request.jwtVerify()
-  })
-
-  app.get('/memories', async (request) => {
-    await request.jwtVerify()
-
-    const memories = await prisma.memory.findMany({
-      where: {
-        userId: request.user.sub,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    })
-
-    return memories.map((memory) => {
-      return {
-        id: memory.id,
-        coverUrl: memory.coverUrl,
-        excerpt: memory.content.substring(0, 115).concat('...'),
-      }
-    })
-  })
-
-  app.get('/memories/:id', async (request, reply) => {
-    const paramsSchema = z.object({
-      id: z.string().uuid(),
-    })
-
-    const { id } = paramsSchema.parse(request.params)
-
-    const memory = await prisma.memory.findUniqueOrThrow({
-      where: {
-        id,
-      },
-    })
-
-    if (!memory.isPublic && memory.userId !== request.params.sub) {
-      return reply.status(401).send({
-        error: 'You are not allowed to access this memory',
-      })
-    }
-    return memory
-  })
-
-  app.post('/memories', async (request) => {
+  app.post('/register', async (request) => {
     const bodySchema = z.object({
-      content: z.string(),
-      coverUrl: z.string(),
-      isPublic: z.coerce.boolean().default(false),
+      code: z.string(),
     })
 
-    const { content, coverUrl, isPublic } = bodySchema.parse(request.body)
+    const { code } = bodySchema.parse(request.body)
 
-    const memory = await prisma.memory.create({
-      data: {
-        content,
-        coverUrl,
-        isPublic,
-        userId: request.user.sub,
+    const accessTokenResponse = await axios.post(
+      'https://github.com/login/oauth/access_token',
+      null,
+      {
+        params: {
+          client_id: process.env.GITHUB_CLIENT_ID,
+          client_secret: process.env.GITHUB_CLIENT_SECRET,
+          code,
+        },
+        headers: {
+          Accept: 'application/json',
+        },
+      },
+    )
+
+    const { access_token } = accessTokenResponse.data
+
+    const userResponse = await axios.get('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
       },
     })
 
-    return memory
-  })
-
-  app.put('/memories/:id', async (request, reply) => {
-    const paramsSchema = z.object({
-      id: z.string().uuid(),
-    })
-    const { id } = paramsSchema.parse(request.params)
-
-    const bodySchema = z.object({
-      content: z.string(),
-      coverUrl: z.string(),
-      isPublic: z.coerce.boolean().default(false),
+    const userSchema = z.object({
+      id: z.number(),
+      login: z.string(),
+      name: z.string(),
+      avatar_url: z.string().url(),
     })
 
-    const { content, coverUrl, isPublic } = bodySchema.parse(request.body)
+    const userInfo = userSchema.parse(userResponse.data)
 
-    let memory = await prisma.memory.findFirstOrThrow({
+    let user = await prisma.user.findUnique({
       where: {
-        id,
+        githubId: userInfo.id,
       },
     })
 
-    if (memory.userId !== request.params.sub) {
-      return reply.status(401).send({
-        error: 'You are not allowed to access this memory',
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          githubId: userInfo.id,
+          login: userInfo.login,
+          name: userInfo.name,
+          avatarUrl: userInfo.avatar_url,
+        },
       })
     }
 
-    memory = await prisma.memory.update({
-      where: {
-        id,
+    const token = app.jwt.sign(
+      {
+        name: user.name,
+        avatarUrl: user.avatarUrl,
       },
-      data: {
-        content,
-        coverUrl,
-        isPublic,
+      {
+        sub: user.id,
+        expiresIn: '30 days',
       },
-    })
+    )
 
-    return memmory
-  })
-
-  app.delete('/memories/:id', async (request) => {
-    const paramsSchema = z.object({
-      id: z.string().uuid(),
-    })
-
-    const { id } = paramsSchema.parse(request.params)
-
-    const memory = await prisma.memory.findFirstOrThrow({
-      where: {
-        id,
-      },
-    })
-
-    if (memory.userId !== request.params.sub) {
-      return reply.status(401).send({
-        error: 'You are not allowed to access this memory',
-      })
+    return {
+      token,
     }
-
-    await prisma.memory.delete({
-      where: {
-        id,
-      },
-    })
   })
 }
