@@ -7,23 +7,29 @@ export async function memoriesRoutes(app: FastifyInstance) {
     await request.jwtVerify()
   })
 
-  app.get('/memories', async (request) => {
-    const memories = await prisma.memory.findMany({
-      where: {
-        userId: request.user.sub,
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    })
+  app.get('/memories', async (request, reply) => {
+    try {
+      const memories = await prisma.memory.findMany({
+        where: {
+          userId: request.user.sub,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      })
 
-    return memories.map((memory) => {
-      return {
-        id: memory.id,
-        coverUrl: memory.coverUrl,
-        excerpt: memory.content.substring(0, 115).concat('...'),
-      }
-    })
+      return memories.map((memory) => {
+        return {
+          id: memory.id,
+          coverUrl: memory.coverUrl,
+          excerpt: memory.content.substring(0, 115).concat('...'),
+        }
+      })
+    } catch (error) {
+      return reply.status(401).send({
+        error: 'Something went wrong',
+      })
+    }
   })
 
   app.get('/memories/:id', async (request, reply) => {
@@ -40,31 +46,39 @@ export async function memoriesRoutes(app: FastifyInstance) {
     })
 
     if (!memory.isPublic && memory.userId !== request.user.sub) {
-      return reply.status(401).send()
+      return reply.status(401).send({
+        error: 'You are not allowed to access this memory',
+      })
     }
 
     return memory
   })
 
-  app.post('/memories', async (request) => {
-    const bodySchema = z.object({
-      content: z.string(),
-      coverUrl: z.string(),
-      isPublic: z.coerce.boolean().default(false),
-    })
+  app.post('/memories', async (request, reply) => {
+    try {
+      const bodySchema = z.object({
+        content: z.string(),
+        coverUrl: z.string(),
+        isPublic: z.coerce.boolean().default(false),
+      })
 
-    const { content, coverUrl, isPublic } = bodySchema.parse(request.body)
+      const { content, coverUrl, isPublic } = bodySchema.parse(request.body)
 
-    const memory = await prisma.memory.create({
-      data: {
-        content,
-        coverUrl,
-        isPublic,
-        userId: request.user.sub,
-      },
-    })
+      const memory = await prisma.memory.create({
+        data: {
+          content,
+          coverUrl,
+          isPublic,
+          userId: request.user.sub,
+        },
+      })
 
-    return memory
+      return memory
+    } catch (error) {
+      return reply.status(401).send({
+        error: 'Something went wrong',
+      })
+    }
   })
 
   app.put('/memories/:id', async (request, reply) => {
@@ -89,7 +103,9 @@ export async function memoriesRoutes(app: FastifyInstance) {
     })
 
     if (memory.userId !== request.user.sub) {
-      return reply.status(401).send()
+      return reply.status(401).send({
+        error: 'You are not allowed to access this memory',
+      })
     }
 
     memory = await prisma.memory.update({
@@ -120,7 +136,9 @@ export async function memoriesRoutes(app: FastifyInstance) {
     })
 
     if (memory.userId !== request.user.sub) {
-      return reply.status(401).send()
+      return reply.status(401).send({
+        error: 'You are not allowed to access this memory',
+      })
     }
 
     await prisma.memory.delete({
